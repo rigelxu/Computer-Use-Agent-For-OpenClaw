@@ -5,7 +5,8 @@ import asyncio
 import time
 import uuid
 from typing import Dict, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from loguru import logger
 
@@ -23,6 +24,20 @@ tasks: Dict[str, dict] = {}
 # Agent 和 Executor
 agent: Optional[OpenCUAAgent] = None
 executor: Optional[SafeExecutor] = None
+
+# API 认证
+security = HTTPBearer()
+
+
+def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+    """验证 API Key"""
+    if credentials.credentials != config.API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
 
 
 class TaskRequest(BaseModel):
@@ -81,7 +96,7 @@ async def startup_event():
 
 
 @app.post("/task", response_model=TaskResponse)
-async def create_task(request: TaskRequest):
+async def create_task(request: TaskRequest, api_key: str = Depends(verify_api_key)):
     """创建新任务"""
     task_id = str(uuid.uuid4())
 
@@ -109,7 +124,7 @@ async def create_task(request: TaskRequest):
 
 
 @app.get("/task/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, api_key: str = Depends(verify_api_key)):
     """查询任务状态"""
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -127,7 +142,7 @@ async def get_task_status(task_id: str):
 
 
 @app.post("/task/{task_id}/stop")
-async def stop_task(task_id: str):
+async def stop_task(task_id: str, api_key: str = Depends(verify_api_key)):
     """停止任务"""
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -142,7 +157,7 @@ async def stop_task(task_id: str):
 
 
 @app.get("/screenshot")
-async def get_screenshot():
+async def get_screenshot(api_key: str = Depends(verify_api_key)):
     """获取当前截图（调试用）"""
     try:
         screenshot_bytes = capture_screenshot()
@@ -254,7 +269,7 @@ async def execute_task(task_id: str):
 
 
 @app.get("/")
-async def root():
+async def root(api_key: str = Depends(verify_api_key)):
     """根路径"""
     return {
         "service": "Computer Use Agent",

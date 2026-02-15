@@ -1,7 +1,9 @@
 """
 安全执行器（白名单 pyautogui 函数）
 """
+import ast
 import re
+import time
 import pyautogui
 from loguru import logger
 from typing import Any, Dict
@@ -16,6 +18,12 @@ ALLOWED_FUNCTIONS = {
     'screenshot', 'locateOnScreen', 'locateCenterOnScreen',
     'position', 'size'
 }
+
+# 允许的模块
+ALLOWED_MODULES = {'time'}
+
+# 允许的 time 模块函数
+ALLOWED_TIME_FUNCTIONS = {'sleep'}
 
 
 class SafeExecutor:
@@ -65,10 +73,24 @@ class SafeExecutor:
         try:
             logger.info(f"Executing: {code}")
 
-            # 创建安全的执行环境
+            # 创建安全的执行环境（只提供白名单模块）
             safe_globals = {
                 "pyautogui": pyautogui,
-                "__builtins__": {}
+                "time": time,
+                "__builtins__": {
+                    # 只允许基本类型和操作
+                    "int": int,
+                    "float": float,
+                    "str": str,
+                    "bool": bool,
+                    "list": list,
+                    "dict": dict,
+                    "tuple": tuple,
+                    "range": range,
+                    "len": len,
+                    "min": min,
+                    "max": max,
+                }
             }
 
             exec(code, safe_globals)
@@ -82,23 +104,63 @@ class SafeExecutor:
 
     def _is_safe(self, code: str) -> bool:
         """
-        检查代码是否安全（只包含白名单函数）
+        使用 AST 检查代码是否安全（白名单验证）
         """
-        # 提取所有 pyautogui 函数调用
-        pattern = r'pyautogui\.(\w+)\('
-        matches = re.findall(pattern, code)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            logger.warning(f"Syntax error in code: {e}")
+            return False
 
-        for func_name in matches:
-            if func_name not in ALLOWED_FUNCTIONS:
-                logger.warning(f"Disallowed function: {func_name}")
-                return False
+        # 遍历 AST 节点
+        for node in ast.walk(tree):
+            # 禁止 import（除了已有的 pyautogui 和 time）
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name not in ALLOWED_MODULES:
+                            logger.warning(f"Disallowed import: {alias.name}")
+                            return False
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module not in ALLOWED_MODULES:
+                        logger.warning(f"Disallowed import from: {node.module}")
+                        return False
 
-        # 检查是否包含危险关键字
-        dangerous_keywords = ['import', 'exec', 'eval', 'open', 'os.', 'sys.', 'subprocess', '__']
-        for keyword in dangerous_keywords:
-            if keyword in code:
-                logger.warning(f"Dangerous keyword detected: {keyword}")
-                return False
+            # 检查函数调用
+            if isinstance(node, ast.Call):
+                # pyautogui.xxx() 调用
+                if isinstance(node.func, ast.Attribute):
+                    if isinstance(node.func.value, ast.Name):
+                        module_name = node.func.value.id
+                        func_name = node.func.attr
+
+                        if module_name == 'pyautogui':
+                            if func_name not in ALLOWED_FUNCTIONS:
+                                logger.warning(f"Disallowed pyautogui function: {func_name}")
+                                return False
+                        elif module_name == 'time':
+                            if func_name not in ALLOWED_TIME_FUNCTIONS:
+                                logger.warning(f"Disallowed time function: {func_name}")
+                                return False
+                        else:
+                            logger.warning(f"Disallowed module call: {module_name}.{func_name}")
+                            return False
+                    else:
+                        # 禁止属性链访问（如 obj.__class__.__bases__）
+                        logger.warning(f"Disallowed attribute chain access")
+                        return False
+
+            # 禁止访问 __ 开头的属性（防止沙箱绕过）
+            if isinstance(node, ast.Attribute):
+                if node.attr.startswith('__'):
+                    logger.warning(f"Disallowed dunder attribute: {node.attr}")
+                    return False
+
+            # 禁止 exec/eval
+            if isinstance(node, ast.Name):
+                if node.id in ('exec', 'eval', 'compile', '__import__'):
+                    logger.warning(f"Disallowed builtin: {node.id}")
+                    return False
 
         return True
 

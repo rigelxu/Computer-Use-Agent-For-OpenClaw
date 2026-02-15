@@ -50,27 +50,41 @@ pip install -r requirements.txt
 ### 启动
 
 ```bash
+# 设置 API Key（可选，不设置会自动生成随机 key）
+export CUA_API_KEY="your-secret-key-here"
+
 python main.py
 # 或
 uvicorn main:app --host 0.0.0.0 --port 8100
 ```
 
-### API
+启动后会在日志中看到生成的 API Key（如果未设置环境变量）。
+
+### API 认证
+
+所有 API 端点都需要 Bearer Token 认证：
 
 ```bash
+# 设置 API Key
+export API_KEY="your-api-key"
+
 # 提交任务
 curl -X POST http://localhost:8100/task \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"prompt": "打开记事本，输入 Hello World"}'
 
 # 查询状态
-curl http://localhost:8100/task/{task_id}
+curl http://localhost:8100/task/{task_id} \
+  -H "Authorization: Bearer $API_KEY"
 
 # 停止任务
-curl -X POST http://localhost:8100/task/{task_id}/stop
+curl -X POST http://localhost:8100/task/{task_id}/stop \
+  -H "Authorization: Bearer $API_KEY"
 
 # 调试截图
-curl http://localhost:8100/screenshot
+curl http://localhost:8100/screenshot \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 ## 配置
@@ -86,6 +100,14 @@ COT_LEVEL = "l2"                              # CoT 级别 (l1/l2/l3)
 MAX_STEPS = 30                                # 最大步数
 FASTAPI_PORT = 8100                           # 服务端口
 ```
+
+或通过环境变量配置 API Key：
+
+```bash
+export CUA_API_KEY="your-secret-key-here"
+```
+
+如果不设置 `CUA_API_KEY`，系统会自动生成随机密钥并在启动时输出到日志。
 
 ## 致谢
 
