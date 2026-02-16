@@ -5,6 +5,7 @@ import ast
 import re
 import time
 import pyautogui
+import pyperclip
 from loguru import logger
 from typing import Any, Dict
 
@@ -78,6 +79,22 @@ class SafeExecutor:
             code
         )
 
+        # 将 pyautogui.write() 替换为剪贴板粘贴（支持中文）
+        def _replace_write_with_clipboard(match):
+            text = match.group(1) or match.group(2)
+            return f"pyperclip.copy({text})\npyautogui.hotkey('ctrl', 'v')"
+        # 匹配 pyautogui.write(message='...') 和 pyautogui.write('...')
+        code = re.sub(
+            r"pyautogui\.write\(message=((?:'[^']*'|\"[^\"]*\"))\)",
+            _replace_write_with_clipboard,
+            code
+        )
+        code = re.sub(
+            r"pyautogui\.(?:write|typewrite)\(((?:'[^']*'|\"[^\"]*\"))\)",
+            _replace_write_with_clipboard,
+            code
+        )
+
         # 执行代码
         try:
             logger.info(f"Executing: {code}")
@@ -85,6 +102,7 @@ class SafeExecutor:
             # 创建安全的执行环境（只提供白名单模块）
             safe_globals = {
                 "pyautogui": pyautogui,
+                "pyperclip": pyperclip,
                 "time": time,
                 "__builtins__": {
                     # 只允许基本类型和操作
