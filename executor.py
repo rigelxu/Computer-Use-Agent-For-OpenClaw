@@ -35,6 +35,8 @@ class SafeExecutor:
         self.platform = platform.lower()
         # Windows 滚动缩放因子
         self.scroll_factor = 50 if self.platform == "windows" else 1
+        # 关闭 fail-safe（鼠标移到角落不中断）
+        pyautogui.FAILSAFE = False
 
     def execute(self, code: str) -> Dict[str, Any]:
         """

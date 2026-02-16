@@ -5,7 +5,7 @@ import os
 import secrets
 
 # vLLM 服务配置
-VLLM_BASE_URL = "http://192.168.1.36:8000"
+VLLM_BASE_URL = "http://10.0.0.1:8000"
 VLLM_MODEL_NAME = "opencua-7b"
 
 # FastAPI 配置
@@ -22,7 +22,7 @@ SCREEN_HEIGHT = 1080
 
 # Agent 配置
 COT_LEVEL = "l2"  # l1, l2, l3
-COORDINATE_TYPE = "relative"  # relative, absolute, qwen25
+COORDINATE_TYPE = "absolute"  # relative, absolute, qwen25
 PLATFORM = "windows"
 MAX_STEPS = 30
 MAX_IMAGE_HISTORY_LENGTH = 3
