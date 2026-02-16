@@ -202,8 +202,8 @@ async def execute_task(task_id: str):
                 break
 
             # 截图
-            screenshot_bytes = capture_screenshot()
-            obs = {"screenshot": screenshot_bytes}
+            screenshot_bytes, screenshot_scale = capture_screenshot()
+            obs = {"screenshot": screenshot_bytes, "screenshot_scale": screenshot_scale}
 
             # Agent 预测
             response, actions, cot = agent.predict(

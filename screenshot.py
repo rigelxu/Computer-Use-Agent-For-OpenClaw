@@ -7,10 +7,11 @@ from PIL import Image
 from loguru import logger
 
 
-def capture_screenshot(max_width: int = 1280) -> bytes:
+def capture_screenshot(max_width: int = 1366) -> tuple:
     """
-    使用 mss 捕获主显示器截图，返回 PNG 格式的字节数据。
+    使用 mss 捕获主显示器截图，返回 (PNG字节, 缩放比例)。
     如果截图宽度超过 max_width，会等比缩放以减少 token 消耗。
+    缩放比例用于将模型输出的坐标映射回原始屏幕坐标。
     """
     try:
         with mss.mss() as sct:
@@ -22,16 +23,17 @@ def capture_screenshot(max_width: int = 1280) -> bytes:
             img = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
 
             # 等比缩放（减少发给模型的 token 数）
+            scale = 1.0
             if img.width > max_width:
-                ratio = max_width / img.width
-                new_size = (max_width, int(img.height * ratio))
+                scale = img.width / max_width  # e.g. 1920/1080 = 1.778
+                new_size = (max_width, int(img.height / scale))
                 img = img.resize(new_size, Image.LANCZOS)
-                logger.info(f"Screenshot resized: {screenshot.size} -> {new_size}")
+                logger.info(f"Screenshot resized: {screenshot.size} -> {new_size}, scale={scale:.3f}")
 
             # 转换为 PNG 字节
             buffer = BytesIO()
             img.save(buffer, format='PNG')
-            return buffer.getvalue()
+            return buffer.getvalue(), scale
     except Exception as e:
         logger.error(f"Failed to capture screenshot: {e}")
         raise

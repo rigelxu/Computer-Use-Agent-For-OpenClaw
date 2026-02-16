@@ -71,6 +71,13 @@ class SafeExecutor:
         if self.platform == "windows":
             code = self._scale_scroll(code)
 
+        # 修正 hotkey 列表参数：hotkey(['cmd', 's']) -> hotkey('cmd', 's')
+        code = re.sub(
+            r"pyautogui\.hotkey\(\[([^\]]+)\]\)",
+            r"pyautogui.hotkey(\1)",
+            code
+        )
+
         # 执行代码
         try:
             logger.info(f"Executing: {code}")

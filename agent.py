@@ -23,7 +23,8 @@ import config
 def parse_response_to_cot_and_action(
     input_string: str,
     screen_size: Tuple[int, int],
-    coordinate_type: str
+    coordinate_type: str,
+    screenshot_scale: float = 1.0
 ) -> Tuple[str, List[str], dict]:
     """
     解析模型响应，提取 Observation/Thought/Action/Code
@@ -93,7 +94,8 @@ def parse_response_to_cot_and_action(
             corrected_code,
             screen_width=screen_size[0],
             screen_height=screen_size[1],
-            coordinate_type=coordinate_type
+            coordinate_type=coordinate_type,
+            screenshot_scale=screenshot_scale
         )
 
         if not sections.get('code') or not sections.get('action'):
@@ -279,7 +281,8 @@ class OpenCUAAgent:
                 low_level_instruction, pyautogui_actions, other_cot = parse_response_to_cot_and_action(
                     response,
                     self.screen_size,
-                    self.coordinate_type
+                    self.coordinate_type,
+                    screenshot_scale=obs.get("screenshot_scale", 1.0)
                 )
 
                 if "<Error>" in low_level_instruction or not pyautogui_actions:

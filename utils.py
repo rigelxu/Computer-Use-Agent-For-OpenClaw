@@ -46,12 +46,13 @@ def project_coordinate_to_absolute_scale(
     pyautogui_code: str,
     screen_width: int,
     screen_height: int,
-    coordinate_type: str = "relative"
+    coordinate_type: str = "relative",
+    screenshot_scale: float = 1.0
 ) -> str:
     """
     将 pyautogui 代码中的相对坐标转换为绝对坐标
     """
-    def _coordinate_projection(x, y, screen_width, screen_height, coordinate_type):
+    def _coordinate_projection(x, y, screen_width, screen_height, coordinate_type, scale=1.0):
         if coordinate_type == "relative":
             return int(round(x * screen_width)), int(round(y * screen_height))
         elif coordinate_type == "qwen25":
@@ -66,7 +67,8 @@ def project_coordinate_to_absolute_scale(
                 return int(round(x * width)), int(round(y * height))
             return int(x / width * screen_width), int(y / height * screen_height)
         elif coordinate_type == "absolute":
-            return int(x), int(y)
+            # 如果截图被缩放过，需要把坐标乘以 scale 还原到原始屏幕坐标
+            return int(round(x * scale)), int(round(y * scale))
         else:
             raise ValueError(f"Invalid coordinate type: {coordinate_type}")
 
@@ -124,7 +126,7 @@ def project_coordinate_to_absolute_scale(
             try:
                 x_rel = float(args['x'])
                 y_rel = float(args['y'])
-                x_abs, y_abs = _coordinate_projection(x_rel, y_rel, screen_width, screen_height, coordinate_type)
+                x_abs, y_abs = _coordinate_projection(x_rel, y_rel, screen_width, screen_height, coordinate_type, screenshot_scale)
                 logger.info(f"Projecting coordinates: ({x_rel}, {y_rel}) -> ({x_abs}, {y_abs})")
                 args['x'] = x_abs
                 args['y'] = y_abs

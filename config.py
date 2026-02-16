@@ -26,7 +26,7 @@ COORDINATE_TYPE = "absolute"  # relative, absolute, qwen25
 PLATFORM = "windows"
 MAX_STEPS = 30
 MAX_IMAGE_HISTORY_LENGTH = 3
-MAX_TOKENS = 1500
+MAX_TOKENS = 2048
 TOP_P = 0.9
 TEMPERATURE = 0.0
 
