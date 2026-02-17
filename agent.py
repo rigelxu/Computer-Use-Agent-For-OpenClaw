@@ -181,23 +181,35 @@ class OpenCUAAgent:
         Args:
             instruction: 任务指令
             obs: 观察（包含 screenshot 字段）
-            **kwargs: 其他参数（如 step_idx）
+            **kwargs: app_hints, step_idx, recovery_hint
 
         Returns:
             (response, pyautogui_actions, other_cot)
         """
         step_idx = kwargs.get('step_idx', len(self.actions) + 1)
+        app_hints = kwargs.get('app_hints', '')
+        recovery_hint = kwargs.get('recovery_hint', '')
         logger.info(f"========= Step {step_idx} =======")
         logger.info(f"Instruction: {instruction[:200]}{'...(truncated)' if len(instruction) > 200 else ''}")
 
         # 构建消息
         messages = []
+
+        # system prompt: 基础 + 应用特定提示
+        sys_content = self.system_prompt
+        if app_hints:
+            sys_content += f"\n\n{app_hints}"
         messages.append({
             "role": "system",
-            "content": self.system_prompt
+            "content": sys_content
         })
 
-        instruction_prompt = INSTRUTION_TEMPLATE.format(instruction=instruction)
+        # 注入恢复提示到 instruction
+        full_instruction = instruction
+        if recovery_hint:
+            full_instruction += f"\n\nIMPORTANT: {recovery_hint}"
+
+        instruction_prompt = INSTRUTION_TEMPLATE.format(instruction=full_instruction)
 
         # 添加历史
         history_step_texts = []

@@ -13,10 +13,18 @@ from loguru import logger
 import config
 from agent import OpenCUAAgent
 from executor import SafeExecutor
+from context_manager import ContextManager
+from prompts.manager import PromptManager
+from recovery_manager import RecoveryManager
 from screenshot import capture_screenshot, get_screen_size
 
 
 app = FastAPI(title="Computer Use Agent", version="1.0.0")
+
+# 全局实例
+context_mgr = ContextManager()
+prompt_mgr = PromptManager()
+recovery_mgr = RecoveryManager()
 
 # 任务存储
 tasks: Dict[str, dict] = {}
@@ -290,6 +298,16 @@ async def execute_task(task_id: str):
         instruction = task["prompt"]
         logger.info(f"Starting task {task_id}: {instruction}")
 
+        # 任务开始前：最大化当前活跃窗口，避免坐标偏移
+        try:
+            from window_manager import WindowManager
+            wm = WindowManager()
+            wm.maximize_window()
+            await asyncio.sleep(0.5)
+            logger.info("Maximized active window before task start")
+        except Exception as e:
+            logger.warning(f"Failed to maximize window: {e}")
+
         for step in range(1, max_steps + 1):
             # 检查超时
             if time.time() - start_time > timeout:
@@ -303,15 +321,27 @@ async def execute_task(task_id: str):
                 logger.info(f"Task {task_id} stopped by user")
                 break
 
-            # 截图
-            screenshot_bytes, screenshot_scale = capture_screenshot()
-            obs = {"screenshot": screenshot_bytes, "screenshot_scale": screenshot_scale}
+            # 获取上下文（截图+窗口信息）
+            ctx = context_mgr.get_context()
+            screenshot_bytes = ctx["screenshot_bytes"]
+            obs = {"screenshot": screenshot_bytes, "screenshot_scale": 1.0}
+
+            # 获取应用特定 prompt
+            app_name = ctx["active_app"]
+            app_prompt = prompt_mgr.get_prompt(app_name)
+
+            # 错误恢复检查
+            recovery = recovery_mgr.check_and_recover(step, "", ctx)
+            if recovery["recovery_hint"]:
+                logger.info(f"Recovery: {recovery['recovery_hint']}")
 
             # Agent 预测
             response, actions, cot = agent.predict(
                 instruction=instruction,
                 obs=obs,
-                step_idx=step
+                step_idx=step,
+                app_hints=app_prompt.system_prompt,
+                recovery_hint=recovery.get("recovery_hint", ""),
             )
 
             # 记录历史
