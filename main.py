@@ -44,6 +44,7 @@ class TaskRequest(BaseModel):
     prompt: str
     max_steps: Optional[int] = config.MAX_STEPS
     timeout: Optional[int] = config.TASK_TIMEOUT
+    clipboard_preload: Optional[str] = None  # 预先加载到剪贴板的文字（用于中文等非ASCII文本）
 
 
 class TaskResponse(BaseModel):
@@ -106,6 +107,7 @@ async def create_task(request: TaskRequest, api_key: str = Depends(verify_api_ke
         "prompt": request.prompt,
         "max_steps": request.max_steps,
         "timeout": request.timeout,
+        "clipboard_preload": request.clipboard_preload,
         "steps": 0,
         "result": None,
         "error": None,
@@ -184,6 +186,14 @@ async def execute_task(task_id: str):
     try:
         # 重置 Agent
         agent.reset()
+
+        # 预加载剪贴板内容（用于中文等非ASCII文本）
+        clipboard_text = task.get("clipboard_preload")
+        if clipboard_text:
+            executor.set_clipboard_preload(clipboard_text)
+            logger.info(f"Clipboard preload set: {clipboard_text[:50]}...")
+        else:
+            executor.clear_clipboard_preload()
 
         instruction = task["prompt"]
         logger.info(f"Starting task {task_id}: {instruction}")

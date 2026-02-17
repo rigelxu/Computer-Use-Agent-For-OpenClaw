@@ -92,9 +92,18 @@ action_instructions = [
 code_instrucion = """For the code section, you should output the corresponding code for the action. The code should be either PyAutoGUI code or one of the following functions warped in the code block:
 - {"name": "computer.wait", "description": "Make the computer wait for 20 seconds for installation, running code, etc.", "parameters": {"type": "object", "properties": {}, "required": []}}
 - {"name": "computer.terminate", "description": "Terminate the current task and report its completion status", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["success", "failure"], "description": "The status of the task"}}, "required": ["status"]}}
+
+IMPORTANT for text input:
+- For ANY text input (including Chinese, Japanese, Korean, or any non-ASCII text), use pyautogui.write() with the ORIGINAL text directly. Do NOT convert to pinyin or romanization.
+- Example for Chinese text: pyautogui.write(message='祝大家新年快乐')
+- The system will automatically handle non-ASCII text via clipboard. You just need to write the original text as-is.
+
 Examples for the code section:
 ```python
 pyautogui.click(x=123, y=456)
+```
+```python
+pyautogui.write(message='你好世界')
 ```
 ```code
 computer.terminate(status="success")
