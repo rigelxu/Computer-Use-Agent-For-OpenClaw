@@ -4,10 +4,11 @@
 import ast
 import re
 import time
+import subprocess
 import pyautogui
 import pyperclip
 from loguru import logger
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 # pyautogui 白名单函数
@@ -43,6 +44,8 @@ class SafeExecutor:
         pyautogui.FAILSAFE = False
         # 预加载剪贴板内容（用于中文等非ASCII文本粘贴）
         self._clipboard_preload = None
+        # 文件预加载路径（clipboard_preload 消费后自动复制文件到剪贴板）
+        self._file_preload = None
         # 标记 clipboard_preload 是否已被消费（只粘贴一次）
         self._clipboard_consumed = False
         # 上一次执行的代码（用于检测重复）
@@ -50,15 +53,43 @@ class SafeExecutor:
         # 连续重复执行计数
         self._repeat_count = 0
 
-    def set_clipboard_preload(self, text: str):
+    def set_clipboard_preload(self, text: str, file_preload: Optional[str] = None):
         """设置预加载剪贴板内容"""
         self._clipboard_preload = text
+        self._file_preload = file_preload
         self._clipboard_consumed = False
 
     def clear_clipboard_preload(self):
         """清除预加载剪贴板内容"""
         self._clipboard_preload = None
+        self._file_preload = None
         self._clipboard_consumed = False
+
+    def copy_file_to_clipboard(self, file_path: str):
+        """用 PowerShell 把文件复制到系统剪贴板"""
+        ps_script = f'''
+Add-Type -AssemblyName System.Windows.Forms
+$file = New-Object System.Collections.Specialized.StringCollection
+$file.Add('{file_path}')
+[System.Windows.Forms.Clipboard]::SetFileDropList($file)
+'''
+        try:
+            result = subprocess.run(
+                ['powershell', '-ExecutionPolicy', 'Bypass', '-Command', ps_script],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                logger.info(f"File copied to clipboard: {file_path}")
+            else:
+                logger.error(f"Failed to copy file to clipboard: {result.stderr}")
+        except Exception as e:
+            logger.error(f"Error copying file to clipboard: {e}")
+
+    def _on_clipboard_consumed(self):
+        """clipboard_preload 被消费后的回调：如果有 file_preload，复制文件到剪贴板"""
+        if self._file_preload:
+            logger.info(f"Clipboard preload consumed, loading file to clipboard: {self._file_preload}")
+            self.copy_file_to_clipboard(self._file_preload)
 
     def execute(self, code: str) -> Dict[str, Any]:
         """
@@ -112,10 +143,13 @@ class SafeExecutor:
 
         # 如果代码里有 Ctrl+V 且 clipboard_preload 未消费，标记为已消费
         # （agent 可能直接用 hotkey 粘贴而不是 write，preload 已经在剪贴板里了）
+        # 注意：file_preload 的加载要在 Ctrl+V 执行之后，否则会覆盖剪贴板
+        _needs_file_preload_after = False
         if (self._clipboard_preload and not self._clipboard_consumed
                 and re.search(r"pyautogui\.hotkey\(\s*['\"]ctrl['\"]\s*,\s*['\"]v['\"]\s*\)", code)):
             logger.info(f"[clipboard_consumed] Ctrl+V detected, marking preload as consumed")
             self._clipboard_consumed = True
+            _needs_file_preload_after = bool(self._file_preload)
 
         # 将所有 pyautogui.write() 替换为剪贴板粘贴
         # 原因：pyautogui.write 不支持非ASCII字符，在中文系统上不可靠
@@ -131,6 +165,7 @@ class SafeExecutor:
                     and raw_text.strip() != self._clipboard_preload.strip()):
                 logger.info(f"Substituting '{raw_text[:40]}' with clipboard_preload: '{self._clipboard_preload}'")
                 self._clipboard_consumed = True
+                self._on_clipboard_consumed()
                 escaped = self._clipboard_preload.replace("\\", "\\\\").replace("'", "\\'")
                 return f"pyperclip.copy('{escaped}')\npyautogui.hotkey('ctrl', 'v')"
             # 无 preload 或已消费：仍然走剪贴板粘贴（比 write 可靠）
@@ -173,6 +208,11 @@ class SafeExecutor:
             }
 
             exec(code, safe_globals)
+
+            # 代码执行完毕后，如果需要加载文件到剪贴板，现在执行
+            # （必须在 Ctrl+V 粘贴文字之后，否则会覆盖剪贴板内容）
+            if _needs_file_preload_after:
+                self._on_clipboard_consumed()
 
             return {"success": True, "message": "Executed successfully", "error": None}
 

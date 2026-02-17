@@ -45,6 +45,7 @@ class TaskRequest(BaseModel):
     max_steps: Optional[int] = config.MAX_STEPS
     timeout: Optional[int] = config.TASK_TIMEOUT
     clipboard_preload: Optional[str] = None  # 预先加载到剪贴板的文字（用于中文等非ASCII文本）
+    file_preload: Optional[str] = None  # 文件路径，clipboard_preload 消费后自动复制文件到剪贴板
     confirm_before_send: Optional[bool] = False  # 发送前暂停等待确认
 
 
@@ -109,6 +110,7 @@ async def create_task(request: TaskRequest, api_key: str = Depends(verify_api_ke
         "max_steps": request.max_steps,
         "timeout": request.timeout,
         "clipboard_preload": request.clipboard_preload,
+        "file_preload": request.file_preload,
         "confirm_before_send": request.confirm_before_send,
         "confirm_event": asyncio.Event() if request.confirm_before_send else None,
         "confirm_result": None,  # "yes" or "no"
@@ -256,11 +258,18 @@ async def execute_task(task_id: str):
 
         # 预加载剪贴板内容（用于中文等非ASCII文本）
         clipboard_text = task.get("clipboard_preload")
+        file_preload = task.get("file_preload")
         if clipboard_text:
-            executor.set_clipboard_preload(clipboard_text)
+            executor.set_clipboard_preload(clipboard_text, file_preload=file_preload)
             logger.info(f"Clipboard preload set: {clipboard_text[:50]}...")
+            if file_preload:
+                logger.info(f"File preload set: {file_preload}")
         else:
             executor.clear_clipboard_preload()
+            # 如果只有 file_preload 没有 clipboard_preload，直接把文件复制到剪贴板
+            if file_preload:
+                executor.copy_file_to_clipboard(file_preload)
+                logger.info(f"File copied to clipboard: {file_preload}")
 
         instruction = task["prompt"]
         logger.info(f"Starting task {task_id}: {instruction}")
