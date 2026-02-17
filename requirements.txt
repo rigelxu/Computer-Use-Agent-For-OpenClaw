@@ -6,3 +6,6 @@ loguru==0.7.2
 mss==9.0.2
 Pillow>=11.0.0
 pyautogui==0.9.54
+pywin32>=306
+psutil>=5.9.0
+pyperclip>=1.8.0
