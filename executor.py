@@ -110,6 +110,13 @@ class SafeExecutor:
             code
         )
 
+        # 如果代码里有 Ctrl+V 且 clipboard_preload 未消费，标记为已消费
+        # （agent 可能直接用 hotkey 粘贴而不是 write，preload 已经在剪贴板里了）
+        if (self._clipboard_preload and not self._clipboard_consumed
+                and re.search(r"pyautogui\.hotkey\(\s*['\"]ctrl['\"]\s*,\s*['\"]v['\"]\s*\)", code)):
+            logger.info(f"[clipboard_consumed] Ctrl+V detected, marking preload as consumed")
+            self._clipboard_consumed = True
+
         # 将所有 pyautogui.write() 替换为剪贴板粘贴
         # 原因：pyautogui.write 不支持非ASCII字符，在中文系统上不可靠
         def _replace_write_with_clipboard(match):

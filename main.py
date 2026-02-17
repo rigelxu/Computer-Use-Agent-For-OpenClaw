@@ -234,13 +234,21 @@ async def execute_task(task_id: str):
     timeout = task["timeout"]
     confirm_before_send = task.get("confirm_before_send", False)
 
-    # 发送相关关键词（用于检测是否需要确认）
-    SEND_KEYWORDS = ['发送', 'send', 'Send', '确认发送', 'confirm']
+    # 发送相关关键词（仅匹配 action 文本中明确的发送按钮点击）
+    SEND_ACTION_PATTERNS = [
+        '点击发送', '点击"发送"', '点击"发送"', '确认发送',
+        'click the send', 'click send', 'press send',
+        'click the "send"', "click the 'send'",
+        '发送(S)', '发送按钮',
+    ]
 
     def _is_send_action(action_text: str, thought_text: str) -> bool:
-        """检测当前动作是否是发送操作"""
-        combined = (action_text or '') + (thought_text or '')
-        return any(kw in combined for kw in SEND_KEYWORDS)
+        """检测当前动作是否是真正的发送按钮点击（只看 action，不看 thought）"""
+        action_lower = (action_text or '').lower()
+        for pattern in SEND_ACTION_PATTERNS:
+            if pattern.lower() in action_lower:
+                return True
+        return False
 
     try:
         # 重置 Agent
