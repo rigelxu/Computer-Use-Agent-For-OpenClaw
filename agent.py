@@ -328,39 +328,109 @@ class OpenCUAAgent:
         return response, pyautogui_actions, other_cot
 
     def call_llm(self, payload: dict) -> str:
-        """
-        调用 vLLM API（OpenAI 兼容），指数退避重试
-        """
-        url = f"{config.VLLM_BASE_URL}/v1/chat/completions"
+        """调用 LLM API，支持 anthropic 和 vllm 两种 provider"""
+        provider = config.LLM_PROVIDER
         max_retries = 5
 
         for attempt in range(max_retries):
             try:
-                response = httpx.post(
-                    url,
-                    json=payload,
-                    timeout=60
-                )
-
-                if response.status_code != 200:
-                    logger.error(f"LLM API error (attempt {attempt+1}/{max_retries}): {response.text[:200]}")
-                    wait_time = min(2 ** attempt, 30)
-                    time.sleep(wait_time)
-                    continue
-
-                response_data = response.json()
-                finish_reason = response_data["choices"][0].get("finish_reason")
-
-                if finish_reason == "stop":
-                    return response_data['choices'][0]['message']['content']
+                if provider == "anthropic":
+                    return self._call_anthropic(payload)
                 else:
-                    logger.warning(f"LLM did not finish properly: {finish_reason}")
-                    wait_time = min(2 ** attempt, 30)
-                    time.sleep(wait_time)
-
+                    return self._call_vllm(payload)
             except Exception as e:
-                logger.error(f"LLM API call failed (attempt {attempt+1}/{max_retries}): {e}")
-                wait_time = min(2 ** attempt, 30)
-                time.sleep(wait_time)
+                logger.error(f"LLM call failed (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(min(2 ** attempt, 30))
 
         raise RuntimeError(f"Failed to call LLM API after {max_retries} retries")
+
+    def _call_anthropic(self, payload: dict) -> str:
+        """调用 Anthropic Messages API"""
+        url = f"{config.LLM_BASE_URL}/v1/messages"
+        messages = payload["messages"]
+
+        # 提取 system prompt（Anthropic 要求 system 单独传）
+        system_text = ""
+        api_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text += msg["content"] + "\n"
+            else:
+                api_messages.append(msg)
+
+        # 转换图片格式：OpenAI → Anthropic
+        for msg in api_messages:
+            if isinstance(msg["content"], list):
+                new_content = []
+                for block in msg["content"]:
+                    if block.get("type") == "image_url":
+                        data_url = block["image_url"]["url"]
+                        # "data:image/png;base64,xxx" → 提取 base64
+                        b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+                        media_type = "image/png"
+                        if "image/jpeg" in data_url:
+                            media_type = "image/jpeg"
+                        new_content.append({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media_type, "data": b64}
+                        })
+                    else:
+                        new_content.append(block)
+                msg["content"] = new_content
+
+        # 合并连续同 role 消息（Anthropic 不允许）
+        merged = []
+        for msg in api_messages:
+            if merged and merged[-1]["role"] == msg["role"]:
+                prev = merged[-1]["content"]
+                curr = msg["content"]
+                # 统一为 list 格式
+                if isinstance(prev, str):
+                    prev = [{"type": "text", "text": prev}]
+                if isinstance(curr, str):
+                    curr = [{"type": "text", "text": curr}]
+                merged[-1]["content"] = prev + curr
+            else:
+                merged.append(msg)
+
+        body = {
+            "model": config.LLM_MODEL,
+            "max_tokens": payload.get("max_tokens", 2048),
+            "system": system_text.strip(),
+            "messages": merged,
+        }
+
+        headers = {
+            "x-api-key": config.LLM_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        response = httpx.post(url, json=body, headers=headers, timeout=120)
+        if response.status_code != 200:
+            raise RuntimeError(f"Anthropic API error {response.status_code}: {response.text[:300]}")
+
+        data = response.json()
+        # 提取文本内容
+        content = data.get("content", [])
+        texts = [b["text"] for b in content if b.get("type") == "text"]
+        result = "\n".join(texts)
+        if not result:
+            raise ValueError(f"Empty response from Anthropic: {data}")
+        return result
+
+    def _call_vllm(self, payload: dict) -> str:
+        """调用 vLLM API（OpenAI 兼容）"""
+        url = f"{config.VLLM_BASE_URL}/v1/chat/completions"
+        response = httpx.post(url, json=payload, timeout=60)
+
+        if response.status_code != 200:
+            raise RuntimeError(f"vLLM API error: {response.text[:200]}")
+
+        data = response.json()
+        finish_reason = data["choices"][0].get("finish_reason")
+        if finish_reason != "stop":
+            raise RuntimeError(f"vLLM did not finish properly: {finish_reason}")
+
+        return data['choices'][0]['message']['content']

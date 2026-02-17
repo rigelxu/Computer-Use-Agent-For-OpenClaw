@@ -4,8 +4,14 @@
 import os
 import sys
 
-# vLLM 服务配置
-VLLM_BASE_URL = "http://10.0.0.1:8000"
+# LLM 配置（从环境变量读取，绝对不能硬编码）
+LLM_PROVIDER = os.getenv("CUA_LLM_PROVIDER", "anthropic")  # "vllm" or "anthropic"
+LLM_BASE_URL = os.getenv("CUA_LLM_BASE_URL", "")
+LLM_API_KEY = os.getenv("CUA_LLM_API_KEY", "")
+LLM_MODEL = os.getenv("CUA_LLM_MODEL", "claude-opus-4-6")
+
+# 兼容旧配置
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://10.0.0.1:8000")
 VLLM_MODEL_NAME = "opencua-7b"
 
 # FastAPI 配置
@@ -21,6 +27,7 @@ if not API_KEY:
 # 屏幕配置
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
+SCREENSHOT_MAX_WIDTH = int(os.getenv("CUA_SCREENSHOT_MAX_WIDTH", "1600"))
 
 # Agent 配置
 COT_LEVEL = "l2"  # l1, l2, l3

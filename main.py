@@ -1,6 +1,10 @@
 """
 FastAPI 服务入口
 """
+# 加载 .env（必须在 import config 之前）
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 import time
 import uuid
@@ -89,8 +93,9 @@ async def startup_event():
     logger.info(f"Screen size: {screen_width}x{screen_height}")
 
     # 初始化 Agent
+    model_name = config.LLM_MODEL if config.LLM_PROVIDER == "anthropic" else config.VLLM_MODEL_NAME
     agent = OpenCUAAgent(
-        model=config.VLLM_MODEL_NAME,
+        model=model_name,
         history_type="thought_history",
         max_steps=config.MAX_STEPS,
         max_image_history_length=config.MAX_IMAGE_HISTORY_LENGTH,
@@ -342,7 +347,7 @@ async def execute_task(task_id: str):
             # 获取上下文（截图+窗口信息）
             ctx = context_mgr.get_context()
             screenshot_bytes = ctx["screenshot_bytes"]
-            obs = {"screenshot": screenshot_bytes, "screenshot_scale": 1.0}
+            obs = {"screenshot": screenshot_bytes, "screenshot_scale": ctx.get("screenshot_scale", 1.0)}
 
             # 获取应用特定 prompt
             app_name = ctx["active_app"]

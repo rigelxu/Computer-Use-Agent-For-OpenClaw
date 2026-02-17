@@ -5,6 +5,7 @@ from loguru import logger
 from window_manager import WindowManager
 from screenshot import capture_screenshot
 from omniparser_service import OmniParserService
+import config
 
 
 class ContextManager:
@@ -16,7 +17,7 @@ class ContextManager:
         start = time.time()
 
         # 截图
-        screenshot_bytes, _ = capture_screenshot()
+        screenshot_bytes, screenshot_scale = capture_screenshot(max_width=config.SCREENSHOT_MAX_WIDTH)
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode()
 
         # 窗口信息
@@ -38,6 +39,7 @@ class ContextManager:
             "window_list": self.wm.list_windows(),
             "omniparser_elements": omniparser_elements,
             "omniparser_text": omniparser_text,
+            "screenshot_scale": screenshot_scale,
         }
 
         elapsed = (time.time() - start) * 1000
