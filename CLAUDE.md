@@ -56,6 +56,10 @@ computer-use-agent/
 - POST /task/{id}/stop — 停止任务
 - GET /screenshot — 获取当前截图（调试用）
 
+## 同步规则
+- 使用方式、能力范围、API 接口变更必须同步更新 OpenClaw Skill（`~/.openclaw/workspace/skills/computer-use/SKILL.md`）
+- SKILL.md 是外部调用者的唯一参考，保持与实际能力一致
+
 ## 与官方代码的区别
 - 去掉 OSWorld 框架依赖，独立运行
 - call_llm 改为调用本地 vLLM（OpenAI 兼容 API）

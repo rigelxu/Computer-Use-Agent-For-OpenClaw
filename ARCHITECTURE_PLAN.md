@@ -11,7 +11,7 @@
 ### 局限性
 1. **微信特化逻辑硬编码** — SEND_ACTION_PATTERNS、发送确认流程、wechat_send.py坐标硬编码
 2. **缺乏应用状态感知** — 只有截图，无窗口信息/进程/焦点
-3. **缺乏OCR能力** — 完全依赖7B视觉模型识别文本
+3. **缺乏UI元素感知** — 完全依赖7B视觉模型识别文本和控件，无YOLO检测/OCR辅助
 4. **单一执行器** — 只支持pyautogui，无Windows API/shell命令
 5. **Prompt工程不足** — 通用prompt，无应用特定知识/few-shot
 6. **缺乏错误恢复** — 执行失败直接FAIL，无回滚/重试
@@ -24,8 +24,8 @@
 3. **prompts.py → 应用特定Prompt库** — PromptTemplate + 微信/浏览器/文件管理器特定prompt + PromptManager动态选择
 
 ### 需要新增的模块
-1. **context_manager.py** — 整合窗口管理+OCR+截图，提供统一上下文
-2. **ocr_service.py** — PaddleOCR集成，文本提取+按钮定位+缓存
+1. **context_manager.py** — 整合窗口管理+OmniParser+截图，提供统一上下文
+2. **omniparser_service.py** — OmniParser集成（YOLO UI元素检测 + OCR文字识别），输出带标签的UI元素列表
 3. **task_planner.py** — LLM任务分解+完成验证
 4. **recovery_manager.py** — 检查点保存+错误恢复策略
 5. **app_controllers/** — 应用特定控制器（微信/浏览器/文件管理器）
@@ -35,16 +35,17 @@
 FastAPI → TaskOrchestrator → ContextManager + TaskPlanner + PromptManager
     → OpenCUAAgent(LLM) → ExecutorManager → PyAutoGUI/WindowsAPI/Shell
     → RecoveryManager(监控+恢复)
+    ↑ OmniParser(YOLO+OCR) 提供UI元素感知
 ```
 
 ## 三、基础设施建设
 
 | 能力 | 技术选型 | 优先级 | 工作量 |
 |------|---------|--------|--------|
-| OCR | PaddleOCR（中英文准确率高，8MB模型） | P0 | 2天 |
+| UI元素感知 | OmniParser（微软开源，YOLO检测+OCR融合，专为GUI agent设计） | P0 | 2天 |
 | 窗口管理 | pywin32（完整Windows API绑定） | P0 | 1天 |
 | UI Automation | pywinauto（Win32+UIA双后端） | P1 | 3天 |
-| 应用状态检测 | pywin32 + OCR | P1 | 2天 |
+| 应用状态检测 | pywin32 + OmniParser | P1 | 2天 |
 | 剪贴板高级操作 | win32clipboard | P2 | 1天 |
 
 ## 四、具体开发计划
@@ -54,12 +55,12 @@ FastAPI → TaskOrchestrator → ContextManager + TaskPlanner + PromptManager
 
 | 任务 | 内容 | 工作量 | 依赖 |
 |------|------|--------|------|
-| OCR集成 | PaddleOCR + 缓存 + click_text() | 2天 | 无 |
+| OmniParser集成 | YOLO+OCR UI元素检测，输出带标签控件列表 | 2天 | 无 |
 | 窗口管理 | get_active_window/detect_app/activate_window | 1天 | 无 |
-| 上下文管理器 | 整合窗口+OCR+截图 | 1天 | OCR+窗口 |
+| 上下文管理器 | 整合窗口+OmniParser+截图 | 1天 | OmniParser+窗口 |
 | 应用特定Prompt | 微信/浏览器/文件管理器prompt + PromptManager | 3天 | 上下文 |
 | 多执行器架构 | BaseExecutor + WindowsAPIExecutor | 3天 | 窗口管理 |
-| 错误恢复 | 检查点+常见错误处理+弹窗检测 | 2天 | OCR |
+| 错误恢复 | 检查点+常见错误处理+弹窗检测 | 2天 | OmniParser |
 
 ### P1 阶段：能力扩展（3-4周）
 **目标**: 支持浏览器、文件管理、Office操作
