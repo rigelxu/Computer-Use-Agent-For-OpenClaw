@@ -62,7 +62,8 @@ API 端点：`POST http://localhost:8100/task`
 - **max_steps**: 最大执行步数，简单任务 10-15，复杂任务 20-30
 - **timeout**: 超时秒数
 - **clipboard_preload**: ⚠️ **重要** — OpenCUA-7B 无法在代码中输出中文字符，会变成错误拼音。任何需要输入的中文文本必须通过此字段预加载到剪贴板，executor 会自动用 Ctrl+V 粘贴替代 pyautogui.write
-- **confirm_before_send**: 设为 `true` 时，agent 检测到发送动作会暂停，等待确认后才执行。**建议始终开启**
+- **file_preload**: 文件路径。当 clipboard_preload 被消费（第一次 Ctrl+V）后，自动将此文件复制到系统剪贴板，agent 下一次 Ctrl+V 就能粘贴文件/图片。适用于"先搜索联系人再发文件"的两阶段场景
+- **confirm_before_send**: 设为 `true` 时，agent 检测到发送动作会暂停等待确认。⚠️ **注意：开启此选项可能干扰 agent 流程导致任务失败，建议仅在高风险场景使用，一般设为 false**
 
 ### 提交示例（PowerShell）
 
@@ -169,14 +170,25 @@ Invoke-WebRequest -Uri "http://localhost:8100/task/<task_id>/stop" -Method POST 
 }
 ```
 
-### 微信发文件
+### 微信发文件/图片（推荐：file_preload 方案）
 ```json
 {
-  "prompt": "请完成以下任务：\n1. 打开微信，找到联系人\"XXX\"的聊天窗口\n2. 点击聊天输入框旁边的文件发送按钮（📎 或文件图标）\n3. 在文件选择对话框中导航到指定路径\n4. 选择文件并发送\n5. 确认发送成功后 terminate",
-  "max_steps": 20,
-  "timeout": 300
+  "prompt": "请完成以下任务：\n1. 点击屏幕底部任务栏中的微信图标调出微信窗口\n2. 点击左上角搜索框，使用 Ctrl+V 粘贴联系人名字\n3. 在搜索结果中找到并点击联系人进入聊天窗口\n4. 点击底部消息输入框，确保获得焦点\n5. 按 Ctrl+V 粘贴图片（系统已自动切换剪贴板为图片文件）\n6. 图片出现后点击发送按钮或按回车\n7. 确认发送成功后立即 terminate\n\n注意：每个步骤只执行一次，不要重复。完成后立即 terminate。",
+  "max_steps": 15,
+  "timeout": 180,
+  "clipboard_preload": "联系人名字",
+  "file_preload": "C:\\Users\\Administrator\\Desktop\\要发送的文件.png"
 }
 ```
+
+### 微信发文件（备用：纯脚本方案）
+
+当 agent 方案不稳定时，可用纯 pyautogui 脚本：
+```powershell
+cd C:\Users\Administrator\Documents\computer-use-agent
+python wechat_send.py --contact "联系人名" --file "文件路径"
+```
+注意：微信粘贴文件后弹确认框，回车不管用，脚本会自动点击"发送(S)"按钮。
 
 ## 故障排查
 
