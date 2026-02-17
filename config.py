@@ -2,7 +2,7 @@
 配置文件
 """
 import os
-import secrets
+import sys
 
 # vLLM 服务配置
 VLLM_BASE_URL = "http://10.0.0.1:8000"
@@ -12,9 +12,11 @@ VLLM_MODEL_NAME = "opencua-7b"
 FASTAPI_HOST = "0.0.0.0"
 FASTAPI_PORT = 8100
 
-# API 认证配置
-# 从环境变量读取，如果没有则生成随机 key
-API_KEY = os.getenv("CUA_API_KEY", secrets.token_urlsafe(32))
+# API 认证配置（必须从环境变量读取）
+API_KEY = os.getenv("CUA_API_KEY")
+if not API_KEY:
+    print("WARNING: CUA_API_KEY not set! Using insecure default for development only.", file=sys.stderr)
+    API_KEY = "dev-insecure-key"
 
 # 屏幕配置
 SCREEN_WIDTH = 1920

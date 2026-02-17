@@ -7,7 +7,7 @@ import uuid
 from typing import Dict, Optional
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from loguru import logger
 
 import config
@@ -20,6 +20,10 @@ app = FastAPI(title="Computer Use Agent", version="1.0.0")
 
 # 任务存储
 tasks: Dict[str, dict] = {}
+MAX_TASKS = 50  # 最多保留任务数
+
+# 并发控制：同一时间只允许一个任务运行
+_task_lock = asyncio.Lock()
 
 # Agent 和 Executor
 agent: Optional[OpenCUAAgent] = None
@@ -41,12 +45,12 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security
 
 
 class TaskRequest(BaseModel):
-    prompt: str
-    max_steps: Optional[int] = config.MAX_STEPS
-    timeout: Optional[int] = config.TASK_TIMEOUT
-    clipboard_preload: Optional[str] = None  # 预先加载到剪贴板的文字（用于中文等非ASCII文本）
-    file_preload: Optional[str] = None  # 文件路径，clipboard_preload 消费后自动复制文件到剪贴板
-    confirm_before_send: Optional[bool] = False  # 发送前暂停等待确认
+    prompt: str = Field(..., max_length=10000)
+    max_steps: Optional[int] = Field(default=config.MAX_STEPS, ge=1, le=100)
+    timeout: Optional[int] = Field(default=config.TASK_TIMEOUT, ge=10, le=600)
+    clipboard_preload: Optional[str] = Field(default=None, max_length=1000)
+    file_preload: Optional[str] = Field(default=None, max_length=500)
+    confirm_before_send: Optional[bool] = False
 
 
 class TaskResponse(BaseModel):
@@ -101,6 +105,18 @@ async def startup_event():
 @app.post("/task", response_model=TaskResponse)
 async def create_task(request: TaskRequest, api_key: str = Depends(verify_api_key)):
     """创建新任务"""
+    # 并发控制：检查是否有任务在运行
+    running_tasks = [t for t in tasks.values() if t["status"] in ("pending", "running", "awaiting_confirm")]
+    if running_tasks:
+        raise HTTPException(status_code=409, detail="Another task is already running. Wait for it to finish or stop it first.")
+
+    # 任务清理：保留最近 MAX_TASKS 个
+    if len(tasks) >= MAX_TASKS:
+        sorted_tasks = sorted(tasks.items(), key=lambda x: x[1].get("created_at", 0))
+        for tid, _ in sorted_tasks[:len(tasks) - MAX_TASKS + 1]:
+            if tasks[tid]["status"] not in ("pending", "running", "awaiting_confirm"):
+                del tasks[tid]
+
     task_id = str(uuid.uuid4())
 
     tasks[task_id] = {

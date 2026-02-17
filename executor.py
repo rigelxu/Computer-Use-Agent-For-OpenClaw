@@ -2,6 +2,7 @@
 安全执行器（白名单 pyautogui 函数）
 """
 import ast
+import os
 import re
 import time
 import subprocess
@@ -68,34 +69,54 @@ class SafeExecutor:
         self._file_preload = None
         self._clipboard_consumed = False
 
+    def _validate_file_path(self, file_path: str) -> bool:
+        """验证文件路径安全性"""
+        import os.path
+        # 必须是绝对路径
+        if not os.path.isabs(file_path):
+            logger.error(f"File path must be absolute: {file_path}")
+            return False
+        # 不允许路径穿越
+        normalized = os.path.normpath(file_path)
+        if '..' in normalized.split(os.sep):
+            logger.error(f"Path traversal detected: {file_path}")
+            return False
+        # 只允许安全字符（字母、数字、中文、路径分隔符、点、下划线、空格、连字符）
+        import re as _re
+        if not _re.match(r'^[a-zA-Z]:\\[\w\u4e00-\u9fff\s.\-\\]+$', file_path):
+            logger.error(f"Invalid characters in file path: {file_path}")
+            return False
+        # 文件必须存在
+        if not os.path.isfile(file_path):
+            logger.error(f"File not found: {file_path}")
+            return False
+        return True
+
     def copy_file_to_clipboard(self, file_path: str):
         """用 PowerShell 把图片作为 Bitmap 复制到系统剪贴板（微信可直接粘贴）"""
+        # 路径安全验证
+        if not self._validate_file_path(file_path):
+            logger.error(f"File path validation failed, skipping clipboard copy: {file_path}")
+            return
+
         # 判断是否为图片文件
         img_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
         is_image = file_path.lower().endswith(img_exts)
 
-        if is_image:
-            # 图片文件：作为 Bitmap 复制，微信 Ctrl+V 可直接粘贴为图片
-            ps_script = f'''
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$img = [System.Drawing.Image]::FromFile('{file_path}')
-[System.Windows.Forms.Clipboard]::SetImage($img)
-$img.Dispose()
-'''
-        else:
-            # 非图片文件：作为 FileDropList 复制
-            ps_script = f'''
-Add-Type -AssemblyName System.Windows.Forms
-$file = New-Object System.Collections.Specialized.StringCollection
-$file.Add('{file_path}')
-[System.Windows.Forms.Clipboard]::SetFileDropList($file)
-'''
+        # 使用 PowerShell -File 方式传参，避免命令注入
+        ps_script_path = os.path.join(os.path.dirname(__file__), 'copy_file_to_clipboard.ps1')
+
         try:
-            result = subprocess.run(
-                ['powershell', '-ExecutionPolicy', 'Bypass', '-Command', ps_script],
-                capture_output=True, text=True, timeout=10
-            )
+            if is_image:
+                result = subprocess.run(
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-File', ps_script_path, '-FilePath', file_path, '-AsImage'],
+                    capture_output=True, text=True, timeout=10
+                )
+            else:
+                result = subprocess.run(
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-File', ps_script_path, '-FilePath', file_path],
+                    capture_output=True, text=True, timeout=10
+                )
             if result.returncode == 0:
                 mode = "as image" if is_image else "as file"
                 logger.info(f"File copied to clipboard {mode}: {file_path}")
@@ -223,6 +244,18 @@ $file.Add('{file_path}')
                     "len": len,
                     "min": min,
                     "max": max,
+                    # 显式禁止危险函数
+                    "__import__": None,
+                    "eval": None,
+                    "exec": None,
+                    "compile": None,
+                    "open": None,
+                    "getattr": None,
+                    "setattr": None,
+                    "delattr": None,
+                    "globals": None,
+                    "locals": None,
+                    "vars": None,
                 }
             }
 

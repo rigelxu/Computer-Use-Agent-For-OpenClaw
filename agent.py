@@ -188,7 +188,7 @@ class OpenCUAAgent:
         """
         step_idx = kwargs.get('step_idx', len(self.actions) + 1)
         logger.info(f"========= Step {step_idx} =======")
-        logger.info(f"Instruction: {instruction}")
+        logger.info(f"Instruction: {instruction[:200]}{'...(truncated)' if len(instruction) > 200 else ''}")
 
         # 构建消息
         messages = []
@@ -274,7 +274,7 @@ class OpenCUAAgent:
                     "temperature": self.temperature if retry_count == 0 else max(0.2, self.temperature)
                 })
 
-                logger.info(f"Model Output:\n{response}")
+                logger.info(f"Model Output:\n{response[:500]}{'...(truncated)' if len(response) > 500 else ''}")
                 if not response:
                     raise ValueError("Empty response from LLM")
 
@@ -317,21 +317,23 @@ class OpenCUAAgent:
 
     def call_llm(self, payload: dict) -> str:
         """
-        调用 vLLM API（OpenAI 兼容）
+        调用 vLLM API（OpenAI 兼容），指数退避重试
         """
         url = f"{config.VLLM_BASE_URL}/v1/chat/completions"
+        max_retries = 5
 
-        for attempt in range(20):
+        for attempt in range(max_retries):
             try:
                 response = httpx.post(
                     url,
                     json=payload,
-                    timeout=500
+                    timeout=60
                 )
 
                 if response.status_code != 200:
-                    logger.error(f"LLM API error: {response.text}")
-                    time.sleep(5)
+                    logger.error(f"LLM API error (attempt {attempt+1}/{max_retries}): {response.text[:200]}")
+                    wait_time = min(2 ** attempt, 30)
+                    time.sleep(wait_time)
                     continue
 
                 response_data = response.json()
@@ -341,10 +343,12 @@ class OpenCUAAgent:
                     return response_data['choices'][0]['message']['content']
                 else:
                     logger.warning(f"LLM did not finish properly: {finish_reason}")
-                    time.sleep(5)
+                    wait_time = min(2 ** attempt, 30)
+                    time.sleep(wait_time)
 
             except Exception as e:
-                logger.error(f"LLM API call failed: {e}")
-                time.sleep(5)
+                logger.error(f"LLM API call failed (attempt {attempt+1}/{max_retries}): {e}")
+                wait_time = min(2 ** attempt, 30)
+                time.sleep(wait_time)
 
-        raise RuntimeError("Failed to call LLM API after 20 retries")
+        raise RuntimeError(f"Failed to call LLM API after {max_retries} retries")
