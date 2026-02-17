@@ -350,6 +350,68 @@ async def execute_task(task_id: str):
                 task["status"] = "running"
                 logger.info(f"Task {task_id} confirmed, executing send action")
 
+                # 执行发送动作
+                exec_result = executor.execute(action_code)
+                if not exec_result["success"]:
+                    task["status"] = "failed"
+                    task["error"] = exec_result.get("error", "Task failed")
+                    logger.error(f"Task {task_id} failed: {task['error']}")
+                    break
+
+                # 发送后验证：等待后截图，让 agent 判断是否发送成功
+                # 重试最多 3 次，每次间隔 3 秒
+                send_verified = False
+                for retry in range(3):
+                    await asyncio.sleep(3)
+                    verify_screenshot, verify_scale = capture_screenshot()
+                    verify_obs = {"screenshot": verify_screenshot, "screenshot_scale": verify_scale}
+
+                    verify_response, verify_actions, verify_cot = agent.predict(
+                        instruction=(
+                            "请检查当前屏幕：发送是否成功？\n"
+                            "判断标准：聊天输入框/预览区域中没有待发送的图片或文件，"
+                            "且聊天记录中出现了刚才发送的内容。\n"
+                            "如果发送成功，请 terminate。\n"
+                            "如果输入框中仍有待发送的内容（发送按钮还在），请点击发送按钮重试。"
+                        ),
+                        obs=verify_obs,
+                        step_idx=step + retry + 1
+                    )
+
+                    task["history"].append({
+                        "step": step + retry + 1,
+                        "action": verify_cot.get("action"),
+                        "thought": verify_cot.get("thought"),
+                        "code": verify_cot.get("code"),
+                        "response": verify_response,
+                        "verify_retry": retry
+                    })
+                    task["steps"] = step + retry + 1
+
+                    verify_code = verify_actions[0] if verify_actions else "DONE"
+                    logger.info(f"Send verify retry {retry}: action={verify_cot.get('action', '')[:60]}, code={verify_code}")
+
+                    if verify_code == "DONE":
+                        send_verified = True
+                        logger.info(f"Task {task_id}: send verified successfully after {retry} retries")
+                        break
+                    elif verify_code == "FAIL":
+                        logger.warning(f"Task {task_id}: send verification reports failure")
+                        break
+                    else:
+                        # agent 要重试点击发送，执行它
+                        executor.execute(verify_code)
+
+                if send_verified:
+                    task["status"] = "completed"
+                    task["result"] = "Task completed successfully (send verified)"
+                    logger.info(f"Task {task_id} completed with send verification")
+                else:
+                    task["status"] = "failed"
+                    task["error"] = "Send verification failed after retries"
+                    logger.error(f"Task {task_id}: send verification failed")
+                break  # 发送流程结束，退出主循环
+
             # 执行
             exec_result = executor.execute(action_code)
 
