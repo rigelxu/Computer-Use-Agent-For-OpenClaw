@@ -298,15 +298,29 @@ async def execute_task(task_id: str):
         instruction = task["prompt"]
         logger.info(f"Starting task {task_id}: {instruction}")
 
-        # 任务开始前：最大化当前活跃窗口，避免坐标偏移
+        # 任务开始前：激活目标应用并最大化
         try:
             from window_manager import WindowManager
+            import win32gui, win32con
             wm = WindowManager()
+            # 先最小化所有非目标窗口（特别是 PowerShell）
+            for w in wm.list_windows():
+                if any(kw in w["process_name"].lower() for kw in ["powershell", "cmd", "windowsterminal"]):
+                    try:
+                        win32gui.ShowWindow(w["hwnd"], win32con.SW_MINIMIZE)
+                    except:
+                        pass
+            await asyncio.sleep(0.3)
+            # 根据 prompt 关键词激活目标应用
+            prompt_lower = instruction.lower()
+            if "微信" in prompt_lower or "wechat" in prompt_lower:
+                wm.activate_window("微信")
+                await asyncio.sleep(0.3)
             wm.maximize_window()
             await asyncio.sleep(0.5)
-            logger.info("Maximized active window before task start")
+            logger.info(f"Activated and maximized target window")
         except Exception as e:
-            logger.warning(f"Failed to maximize window: {e}")
+            logger.warning(f"Failed to prepare window: {e}")
 
         for step in range(1, max_steps + 1):
             # 检查超时
@@ -330,6 +344,9 @@ async def execute_task(task_id: str):
             app_name = ctx["active_app"]
             app_prompt = prompt_mgr.get_prompt(app_name)
 
+            # OmniParser UI元素信息
+            omniparser_text = ctx.get("omniparser_text", "")
+
             # 错误恢复检查
             recovery = recovery_mgr.check_and_recover(step, "", ctx)
             if recovery["recovery_hint"]:
@@ -340,7 +357,7 @@ async def execute_task(task_id: str):
                 instruction=instruction,
                 obs=obs,
                 step_idx=step,
-                app_hints=app_prompt.system_prompt,
+                app_hints=app_prompt.system_prompt + ("\n\n" + omniparser_text if omniparser_text else ""),
                 recovery_hint=recovery.get("recovery_hint", ""),
             )
 
