@@ -1,4 +1,4 @@
-# Computer-Use-Agent-For-OpenClaw
+# Computer Use Agent For OpenClaw
 
 基于 [OpenCUA-7B](https://huggingface.co/xlangai/OpenCUA-7B) 模型的 Windows 11 桌面自动化 Agent，通过 OpenClaw 集成实现任务调度。
 
