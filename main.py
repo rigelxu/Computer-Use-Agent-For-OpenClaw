@@ -303,22 +303,26 @@ async def execute_task(task_id: str):
             from window_manager import WindowManager
             import win32gui, win32con
             wm = WindowManager()
-            # 先最小化所有非目标窗口（特别是 PowerShell）
-            for w in wm.list_windows():
-                if any(kw in w["process_name"].lower() for kw in ["powershell", "cmd", "windowsterminal"]):
-                    try:
-                        win32gui.ShowWindow(w["hwnd"], win32con.SW_MINIMIZE)
-                    except:
-                        pass
-            await asyncio.sleep(0.3)
-            # 根据 prompt 关键词激活目标应用
+            current_app = wm.detect_app()
             prompt_lower = instruction.lower()
-            if "微信" in prompt_lower or "wechat" in prompt_lower:
+            needs_wechat = "微信" in prompt_lower or "wechat" in prompt_lower
+
+            # 只在目标应用不在前台时才切换
+            if needs_wechat and current_app != "wechat":
+                # 最小化终端窗口
+                for w in wm.list_windows():
+                    if any(kw in w["process_name"].lower() for kw in ["powershell", "cmd", "windowsterminal"]):
+                        try:
+                            win32gui.ShowWindow(w["hwnd"], win32con.SW_MINIMIZE)
+                        except:
+                            pass
+                await asyncio.sleep(0.5)
                 wm.activate_window("微信")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(1)  # 多等一会确保焦点稳定
+
             wm.maximize_window()
             await asyncio.sleep(0.5)
-            logger.info(f"Activated and maximized target window")
+            logger.info(f"Window prepared: app={wm.detect_app()}")
         except Exception as e:
             logger.warning(f"Failed to prepare window: {e}")
 
@@ -352,12 +356,11 @@ async def execute_task(task_id: str):
             if recovery["recovery_hint"]:
                 logger.info(f"Recovery: {recovery['recovery_hint']}")
 
-            # Agent 预测
+            # Agent 预测（暂不注入 app_hints，7B 模型 token 容量有限）
             response, actions, cot = agent.predict(
                 instruction=instruction,
                 obs=obs,
                 step_idx=step,
-                app_hints=app_prompt.system_prompt + ("\n\n" + omniparser_text if omniparser_text else ""),
                 recovery_hint=recovery.get("recovery_hint", ""),
             )
 
