@@ -45,6 +45,7 @@ class TaskRequest(BaseModel):
     max_steps: Optional[int] = config.MAX_STEPS
     timeout: Optional[int] = config.TASK_TIMEOUT
     clipboard_preload: Optional[str] = None  # 预先加载到剪贴板的文字（用于中文等非ASCII文本）
+    confirm_before_send: Optional[bool] = False  # 发送前暂停等待确认
 
 
 class TaskResponse(BaseModel):
@@ -108,6 +109,10 @@ async def create_task(request: TaskRequest, api_key: str = Depends(verify_api_ke
         "max_steps": request.max_steps,
         "timeout": request.timeout,
         "clipboard_preload": request.clipboard_preload,
+        "confirm_before_send": request.confirm_before_send,
+        "confirm_event": asyncio.Event() if request.confirm_before_send else None,
+        "confirm_result": None,  # "yes" or "no"
+        "pending_code": None,  # 等待确认时暂存的代码
         "steps": 0,
         "result": None,
         "error": None,
@@ -150,12 +155,57 @@ async def stop_task(task_id: str, api_key: str = Depends(verify_api_key)):
         raise HTTPException(status_code=404, detail="Task not found")
 
     task = tasks[task_id]
-    if task["status"] == "running":
+    if task["status"] in ("running", "awaiting_confirm"):
         task["status"] = "stopped"
         task["error"] = "Task stopped by user"
+        # 如果在等待确认，释放事件
+        if task.get("confirm_event"):
+            task["confirm_result"] = "no"
+            task["confirm_event"].set()
         return {"message": "Task stopped successfully"}
     else:
         return {"message": f"Task is not running (status: {task['status']})"}
+
+
+class ConfirmRequest(BaseModel):
+    confirm: bool = True  # True=继续发送, False=取消
+
+
+@app.post("/task/{task_id}/confirm")
+async def confirm_task(task_id: str, request: ConfirmRequest, api_key: str = Depends(verify_api_key)):
+    """确认或拒绝待确认的发送操作"""
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = tasks[task_id]
+    if task["status"] != "awaiting_confirm":
+        return {"message": f"Task is not awaiting confirmation (status: {task['status']})"}
+
+    task["confirm_result"] = "yes" if request.confirm else "no"
+    task["confirm_event"].set()
+    action = "confirmed" if request.confirm else "rejected"
+    return {"message": f"Task {action} successfully"}
+
+
+@app.get("/task/{task_id}/screenshot")
+async def get_task_screenshot(task_id: str, api_key: str = Depends(verify_api_key)):
+    """获取任务当前截图（用于确认前查看）"""
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        screenshot_bytes, _ = capture_screenshot()
+        from utils import encode_image
+        screenshot_base64 = encode_image(screenshot_bytes)
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": tasks[task_id]["status"],
+            "screenshot": f"data:image/png;base64,{screenshot_base64}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to capture screenshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/screenshot")
@@ -182,6 +232,15 @@ async def execute_task(task_id: str):
     start_time = time.time()
     max_steps = task["max_steps"]
     timeout = task["timeout"]
+    confirm_before_send = task.get("confirm_before_send", False)
+
+    # 发送相关关键词（用于检测是否需要确认）
+    SEND_KEYWORDS = ['发送', 'send', 'Send', '确认发送', 'confirm']
+
+    def _is_send_action(action_text: str, thought_text: str) -> bool:
+        """检测当前动作是否是发送操作"""
+        combined = (action_text or '') + (thought_text or '')
+        return any(kw in combined for kw in SEND_KEYWORDS)
 
     try:
         # 重置 Agent
@@ -240,25 +299,57 @@ async def execute_task(task_id: str):
 
             action_code = actions[0]
 
-            # 执行
-            exec_result = executor.execute(action_code)
-
             if action_code == "DONE":
                 task["status"] = "completed"
                 task["result"] = "Task completed successfully"
                 logger.info(f"Task {task_id} completed")
                 break
 
-            if action_code == "FAIL" or not exec_result["success"]:
+            if action_code == "FAIL":
                 task["status"] = "failed"
-                task["error"] = exec_result.get("error", "Task failed")
-                logger.error(f"Task {task_id} failed: {task['error']}")
+                task["error"] = "Task failed"
+                logger.error(f"Task {task_id} failed")
                 break
 
             if action_code == "WAIT":
                 logger.info("Waiting 20 seconds...")
                 await asyncio.sleep(20)
                 continue
+
+            # 发送前确认机制
+            if confirm_before_send and _is_send_action(cot.get("action", ""), cot.get("thought", "")):
+                logger.info(f"Task {task_id} step {step}: send action detected, awaiting confirmation")
+                task["status"] = "awaiting_confirm"
+                task["pending_code"] = action_code
+                task["confirm_event"].clear()
+
+                # 等待确认（最多等 5 分钟）
+                try:
+                    await asyncio.wait_for(task["confirm_event"].wait(), timeout=300)
+                except asyncio.TimeoutError:
+                    task["status"] = "timeout"
+                    task["error"] = "Confirmation timeout (5 min)"
+                    logger.warning(f"Task {task_id} confirmation timeout")
+                    break
+
+                if task["confirm_result"] != "yes":
+                    task["status"] = "cancelled"
+                    task["error"] = "Send action rejected by user"
+                    logger.info(f"Task {task_id} cancelled by user")
+                    break
+
+                # 确认通过，继续执行
+                task["status"] = "running"
+                logger.info(f"Task {task_id} confirmed, executing send action")
+
+            # 执行
+            exec_result = executor.execute(action_code)
+
+            if not exec_result["success"]:
+                task["status"] = "failed"
+                task["error"] = exec_result.get("error", "Task failed")
+                logger.error(f"Task {task_id} failed: {task['error']}")
+                break
 
             # 短暂延迟
             await asyncio.sleep(1)

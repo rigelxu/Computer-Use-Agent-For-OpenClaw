@@ -110,32 +110,23 @@ class SafeExecutor:
             code
         )
 
-        # 将 pyautogui.write() 替换为剪贴板粘贴（支持中文）
-        def _has_cjk(text):
-            """检查文本是否包含CJK（中日韩）字符"""
-            for ch in text:
-                cp = ord(ch)
-                if (0x4E00 <= cp <= 0x9FFF or  # CJK统一汉字
-                    0x3400 <= cp <= 0x4DBF or  # CJK扩展A
-                    0xF900 <= cp <= 0xFAFF):   # CJK兼容汉字
-                    return True
-            return False
-
+        # 将所有 pyautogui.write() 替换为剪贴板粘贴
+        # 原因：pyautogui.write 不支持非ASCII字符，在中文系统上不可靠
         def _replace_write_with_clipboard(match):
             text = match.group(1) or match.group(2)
             raw_text = text.strip("'\"")
             logger.info(f"[clipboard_sub] raw_text repr: {repr(raw_text[:80])}")
-            logger.info(f"[clipboard_sub] has_preload={self._clipboard_preload is not None}, consumed={self._clipboard_consumed}, len={len(raw_text)}")
-            # 如果有 clipboard_preload 且未消费，且当前文本不是 clipboard_preload 本身
-            # （说明模型把中文转成了拼音或部分乱码），使用预加载内容替代
-            # 排除短文本（如 '@'）避免误替换
+            logger.info(f"[clipboard_sub] has_preload={self._clipboard_preload is not None}, consumed={self._clipboard_consumed}")
+            # 如果有 clipboard_preload 且未消费，使用预加载内容替代
+            # 条件：文本长度 > 2 且内容不等于 preload 本身（模型输出了拼音/乱码）
             if (self._clipboard_preload and not self._clipboard_consumed
-                    and len(raw_text) > 5
+                    and len(raw_text) > 2
                     and raw_text.strip() != self._clipboard_preload.strip()):
-                logger.info(f"Substituting '{raw_text[:40]}...' with clipboard_preload: '{self._clipboard_preload}'")
+                logger.info(f"Substituting '{raw_text[:40]}' with clipboard_preload: '{self._clipboard_preload}'")
                 self._clipboard_consumed = True
                 escaped = self._clipboard_preload.replace("\\", "\\\\").replace("'", "\\'")
                 return f"pyperclip.copy('{escaped}')\npyautogui.hotkey('ctrl', 'v')"
+            # 无 preload 或已消费：仍然走剪贴板粘贴（比 write 可靠）
             return f"pyperclip.copy({text})\npyautogui.hotkey('ctrl', 'v')"
         # 匹配 pyautogui.write(message='...') 和 pyautogui.write('...')
         code = re.sub(
