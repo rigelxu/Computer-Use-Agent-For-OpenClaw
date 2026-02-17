@@ -11,6 +11,10 @@ description: 通过 Computer Use Agent (OpenCUA-7B) 自动化 Windows 桌面操�
 
 ```
 OpenClaw → FastAPI(:8100) → OpenCUA Agent → vLLM(:8000) → pyautogui 执行
+                ↓
+    ContextManager (窗口管理 + 截图 + OmniParser可选)
+    RecoveryManager (自动切回目标应用)
+    PromptManager (应用特定Prompt，暂未启用)
 ```
 
 ## 前置条件
@@ -18,6 +22,7 @@ OpenClaw → FastAPI(:8100) → OpenCUA Agent → vLLM(:8000) → pyautogui 执�
 1. **vLLM 服务**必须在宿主机运行（`http://10.0.0.1:8000`，模型 `opencua-7b`）
 2. **VNC 桌面会话**必须保持连接（CUA 通过 mss 截图，需要活跃桌面）
 3. **FastAPI 服务**需要启动（见下方启动步骤）
+4. **OmniParser**（可选）：`http://10.0.0.1:8001`，YOLO+OCR UI元素检测，默认关闭（7B模型token容量不足以处理）
 
 ## 步骤 1：检查服务状态
 
@@ -204,3 +209,4 @@ python wechat_send.py --contact "联系人名" --file "文件路径"
 
 - 代码：`C:\Users\Administrator\Documents\computer-use-agent\`
 - 关键文件：`main.py`（FastAPI）、`executor.py`（执行器）、`agent.py`（Agent）、`config.py`（配置）
+- P0 新增：`window_manager.py`、`context_manager.py`、`recovery_manager.py`、`omniparser_service.py`、`prompts/`（应用特定Prompt）
