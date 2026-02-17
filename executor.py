@@ -54,10 +54,13 @@ class SafeExecutor:
         self._repeat_count = 0
 
     def set_clipboard_preload(self, text: str, file_preload: Optional[str] = None):
-        """设置预加载剪贴板内容"""
+        """设置预加载剪贴板内容，并立即写入系统剪贴板"""
         self._clipboard_preload = text
         self._file_preload = file_preload
         self._clipboard_consumed = False
+        # 立即写入系统剪贴板，确保第一次 Ctrl+V 能粘贴到正确内容
+        pyperclip.copy(text)
+        logger.info(f"Clipboard preload written to system clipboard: {text[:50]}")
 
     def clear_clipboard_preload(self):
         """清除预加载剪贴板内容"""
@@ -66,8 +69,23 @@ class SafeExecutor:
         self._clipboard_consumed = False
 
     def copy_file_to_clipboard(self, file_path: str):
-        """用 PowerShell 把文件复制到系统剪贴板"""
-        ps_script = f'''
+        """用 PowerShell 把图片作为 Bitmap 复制到系统剪贴板（微信可直接粘贴）"""
+        # 判断是否为图片文件
+        img_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
+        is_image = file_path.lower().endswith(img_exts)
+
+        if is_image:
+            # 图片文件：作为 Bitmap 复制，微信 Ctrl+V 可直接粘贴为图片
+            ps_script = f'''
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$img = [System.Drawing.Image]::FromFile('{file_path}')
+[System.Windows.Forms.Clipboard]::SetImage($img)
+$img.Dispose()
+'''
+        else:
+            # 非图片文件：作为 FileDropList 复制
+            ps_script = f'''
 Add-Type -AssemblyName System.Windows.Forms
 $file = New-Object System.Collections.Specialized.StringCollection
 $file.Add('{file_path}')
@@ -79,7 +97,8 @@ $file.Add('{file_path}')
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
-                logger.info(f"File copied to clipboard: {file_path}")
+                mode = "as image" if is_image else "as file"
+                logger.info(f"File copied to clipboard {mode}: {file_path}")
             else:
                 logger.error(f"Failed to copy file to clipboard: {result.stderr}")
         except Exception as e:
@@ -211,7 +230,9 @@ $file.Add('{file_path}')
 
             # 代码执行完毕后，如果需要加载文件到剪贴板，现在执行
             # （必须在 Ctrl+V 粘贴文字之后，否则会覆盖剪贴板内容）
+            # 延迟 1 秒确保 Windows 粘贴动作完成（hotkey 返回不代表粘贴完成）
             if _needs_file_preload_after:
+                time.sleep(1)
                 self._on_clipboard_consumed()
 
             return {"success": True, "message": "Executed successfully", "error": None}
