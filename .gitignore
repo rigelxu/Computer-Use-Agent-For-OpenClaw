@@ -1,3 +1,6 @@
 *.pyc
 __pycache__/
 .env
+debug*.png
+current_screen.png
+test_*.py

@@ -42,3 +42,18 @@ TEMPERATURE = 0.0
 # 超时配置
 STEP_TIMEOUT = 60  # 单步超时（秒）
 TASK_TIMEOUT = 1800  # 任务总超时（秒）
+
+# OmniParser 配置
+OMNIPARSER_ENABLED = os.getenv("CUA_OMNIPARSER_ENABLED", "true").lower() == "true"
+OMNIPARSER_URL = os.getenv("CUA_OMNIPARSER_URL", "http://10.0.0.1:8001")
+
+# SoM 配置
+SOM_MAX_ELEMENTS = int(os.getenv("CUA_SOM_MAX_ELEMENTS", "40"))
+
+# 动作重试配置
+ACTION_RETRY_ENABLED = os.getenv("CUA_ACTION_RETRY", "true").lower() == "true"
+ACTION_RETRY_MAX = int(os.getenv("CUA_ACTION_RETRY_MAX", "3"))
+ACTION_CHANGE_THRESHOLD = float(os.getenv("CUA_ACTION_CHANGE_THRESHOLD", "0.02"))
+
+# DPI 缩放（0 = 自动检测）
+DPI_SCALE = float(os.getenv("CUA_DPI_SCALE", "0"))

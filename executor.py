@@ -8,6 +8,7 @@ import time
 import subprocess
 import pyautogui
 import pyperclip
+from win32_keyboard import send_hotkey as _win32_hotkey
 from loguru import logger
 from typing import Any, Dict, Optional
 
@@ -43,6 +44,8 @@ class SafeExecutor:
         self.scroll_factor = 5 if self.platform == "windows" else 1
         # 关闭 fail-safe（鼠标移到角落不中断）
         pyautogui.FAILSAFE = False
+        # pywinauto 前台窗口缓存
+        self._pwa_app = None
         # 预加载剪贴板内容（用于中文等非ASCII文本粘贴）
         self._clipboard_preload = None
         # 文件预加载路径（clipboard_preload 消费后自动复制文件到剪贴板）
@@ -53,6 +56,72 @@ class SafeExecutor:
         self._last_executed_code = None
         # 连续重复执行计数
         self._repeat_count = 0
+
+    # pyautogui key name → Win32 VK code
+    _VK_MAP = {
+        'ctrl': 0x11, 'shift': 0x10, 'alt': 0x12, 'win': 0x5B,
+        'enter': 0x0D, 'tab': 0x09, 'escape': 0x1B, 'esc': 0x1B,
+        'backspace': 0x08, 'delete': 0x2E, 'del': 0x2E, 'space': 0x20,
+        'up': 0x26, 'down': 0x28, 'left': 0x25, 'right': 0x27,
+        'home': 0x24, 'end': 0x23, 'pageup': 0x21, 'pagedown': 0x22,
+        'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74,
+        'f6': 0x75, 'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79,
+        'f11': 0x7A, 'f12': 0x7B,
+    }
+    _MODIFIER_VKS = {0x11, 0x10, 0x12, 0x5B}  # ctrl, shift, alt, win
+
+    def _win32_send_keys(self, vk_codes: list):
+        """用 AttachThreadInput + PostMessage 发键盘事件（Hyper-V VM 唯一可靠方案）"""
+        import win32gui, win32con, win32api, win32process, ctypes
+        hwnd = win32gui.GetForegroundWindow()
+        tid = win32api.GetCurrentThreadId()
+        ttid, _ = win32process.GetWindowThreadProcessId(hwnd)
+        ctypes.windll.user32.AttachThreadInput(tid, ttid, True)
+        try:
+            win32gui.SetFocus(hwnd)
+            time.sleep(0.05)
+            # key down (modifiers first, then main keys)
+            for vk in vk_codes:
+                win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
+            time.sleep(0.05)
+            # key up (reverse order)
+            for vk in reversed(vk_codes):
+                win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
+        finally:
+            ctypes.windll.user32.AttachThreadInput(tid, ttid, False)
+
+    def _try_pywinauto_keyboard(self, code: str) -> Optional[Dict[str, Any]]:
+        """拦截键盘操作和 win32type，绕过 _is_safe。返回 None 表示不拦截。"""
+        # 匹配 win32type('text')
+        m = re.match(r"^win32type\(['\"](.+)['\"]\)$", code.strip())
+        if m:
+            from win32_keyboard import send_text_to_edit
+            try:
+                send_text_to_edit(m.group(1))
+                return {"success": True, "message": f"win32type: {m.group(1)}", "error": None}
+            except Exception as e:
+                return {"success": False, "message": None, "error": str(e)}
+
+        # 匹配 pyautogui.hotkey('key1', 'key2', ...)
+        m = re.match(r"^pyautogui\.hotkey\((.+)\)$", code.strip())
+        if m:
+            keys = [k.strip().strip("'\"") for k in m.group(1).split(',')]
+            return self._exec_pwa_hotkey(keys)
+
+        # 匹配 pyautogui.press('key')
+        m = re.match(r"^pyautogui\.press\(['\"](\w+)['\"]\)$", code.strip())
+        if m:
+            return self._exec_pwa_hotkey([m.group(1)])
+
+        return None
+
+    def _exec_pwa_hotkey(self, keys: list) -> Dict[str, Any]:
+        """用 Win32 PostMessage 发送键盘事件"""
+        try:
+            _win32_hotkey(*keys)
+            return {"success": True, "message": f"win32: {keys}", "error": None}
+        except Exception as e:
+            return {"success": False, "message": None, "error": str(e)}
 
     def set_clipboard_preload(self, text: str, file_preload: Optional[str] = None):
         """设置预加载剪贴板内容，并立即写入系统剪贴板"""
@@ -181,6 +250,11 @@ class SafeExecutor:
             code
         )
 
+        # pywinauto 拦截：纯 hotkey/press 调用走 pywinauto（比 pyautogui 可靠）
+        pwa_result = self._try_pywinauto_keyboard(code)
+        if pwa_result is not None:
+            return pwa_result
+
         # 如果代码里有 Ctrl+V 且 clipboard_preload 未消费，标记为已消费
         # （agent 可能直接用 hotkey 粘贴而不是 write，preload 已经在剪贴板里了）
         # 注意：file_preload 的加载要在 Ctrl+V 执行之后，否则会覆盖剪贴板
@@ -226,10 +300,31 @@ class SafeExecutor:
         try:
             logger.info(f"Executing: {code}")
 
-            # 创建安全的执行环境（只提供白名单模块）
+            # 包装 pyautogui，让 hotkey/press 走 pywinauto
+            class _PwaWrappedPyautogui:
+                def __getattr__(self, name):
+                    return getattr(pyautogui, name)
+                def hotkey(self, *keys):
+                    self_outer = self  # noqa
+                    try:
+                        result = _executor_self._exec_pwa_hotkey(list(keys))
+                        logger.info(f"hotkey via pywinauto: {keys}")
+                    except Exception as e:
+                        logger.warning(f"pywinauto hotkey failed ({e}), fallback")
+                        pyautogui.hotkey(*keys)
+                def press(self, key):
+                    try:
+                        _executor_self._exec_pwa_hotkey([key])
+                    except Exception:
+                        pyautogui.press(key)
+            _executor_self = self
+            _wrapped_pyautogui = _PwaWrappedPyautogui()
+
+            from win32_keyboard import send_text_to_edit as _w32_type
             safe_globals = {
-                "pyautogui": pyautogui,
+                "pyautogui": _wrapped_pyautogui,
                 "pyperclip": pyperclip,
+                "__win32_type__": _w32_type,
                 "time": time,
                 "__builtins__": {
                     # 只允许基本类型和操作
